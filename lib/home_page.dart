@@ -4,15 +4,15 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key});
+  const MyHomePage({Key? key});
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin{
   final Completer<GoogleMapController> _controller = Completer();
-  CameraPosition? _currentCameraPosition;
+  late GoogleMapController _mapController;
 
   static const CameraPosition _kGooglePlex = CameraPosition(
     target: LatLng(23.777176, 90.399452),
@@ -22,13 +22,11 @@ class _MyHomePageState extends State<MyHomePage> {
   final List<Marker> _markers = <Marker>[];
 
   Future<Position> _getUserCurrentLocation() async {
-    await Geolocator.requestPermission()
-        .then((value) {})
-        .onError((error, stackTrace) {
+    await Geolocator.requestPermission().then((value) {}).onError((error, stackTrace) {
       print(error.toString());
     });
 
-    return await Geolocator.getCurrentPosition();
+    return await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
   }
 
   @override
@@ -42,61 +40,33 @@ class _MyHomePageState extends State<MyHomePage> {
       _markers.add(Marker(
           markerId: const MarkerId('1'),
           position: LatLng(value.latitude, value.longitude),
-          infoWindow: const InfoWindow(title: 'Current Location')));
+          infoWindow: InfoWindow(title: 'Current Location')));
 
       final GoogleMapController controller = await _controller.future;
-      CameraPosition targetPosition = CameraPosition(
+      _mapController = controller;
+      CameraPosition kGooglePlex = CameraPosition(
         target: LatLng(value.latitude, value.longitude),
-        zoom: 16,
+        zoom: 17,
+        bearing: 360.0,
+        tilt: 45.0,
       );
-      _smoothMoveCamera(controller, targetPosition);
+      Future.delayed(Duration(seconds: 2));
+      animateMapViewCenterToCoordinates(LatLng(value.latitude, value.longitude), kGooglePlex);
+
       setState(() {});
     });
-  }
-
-  void _smoothMoveCamera(GoogleMapController controller, CameraPosition targetPosition) async {
-    if (_currentCameraPosition == null) {
-      _currentCameraPosition = targetPosition;
-    }
-
-    final CameraPosition startPosition = _currentCameraPosition!;
-
-    final double latDiff = targetPosition.target.latitude - startPosition.target.latitude;
-    final double lngDiff = targetPosition.target.longitude - startPosition.target.longitude;
-    final double zoomDiff = targetPosition.zoom - startPosition.zoom;
-
-    const int steps = 20;
-    const Duration stepDuration = Duration(milliseconds: 200);
-    final double stepLat = latDiff / steps;
-    final double stepLng = lngDiff / steps;
-    final double stepZoom = zoomDiff / steps;
-
-    for (int i = 0; i < steps; i++) {
-      CameraPosition intermediatePosition = CameraPosition(
-        target: LatLng(
-          startPosition.target.latitude + stepLat * i,
-          startPosition.target.longitude + stepLng * i,
-        ),
-        zoom: startPosition.zoom + stepZoom * i,
-      );
-      controller.animateCamera(CameraUpdate.newCameraPosition(intermediatePosition));
-      await Future.delayed(stepDuration);
-    }
-
-    // Final camera position to ensure it ends up exactly at the target
-    controller.animateCamera(CameraUpdate.newCameraPosition(targetPosition));
-    _currentCameraPosition = targetPosition;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title: const Text(
-            'Google Map Example',
-            style: TextStyle(color: Colors.white),
-          ),
-          backgroundColor: Colors.blue),
+        title: const Text(
+          'Google Map Example',
+          style: TextStyle(color: Colors.white),
+        ),
+        backgroundColor: Colors.blue,
+      ),
       body: Center(
         child: Container(
           width: MediaQuery.of(context).size.width,
@@ -109,12 +79,7 @@ class _MyHomePageState extends State<MyHomePage> {
             surfaceTintColor: Colors.white,
             color: Colors.white,
             child: ClipRRect(
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(12),
-                topRight: Radius.circular(12),
-                bottomRight: Radius.circular(12),
-                bottomLeft: Radius.circular(12),
-              ),
+              borderRadius: BorderRadius.circular(12),
               child: GoogleMapSet(),
             ),
           ),
@@ -123,7 +88,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Widget GoogleMapSet(){
+  Widget GoogleMapSet() {
     return GoogleMap(
       mapType: MapType.normal,
       initialCameraPosition: _kGooglePlex,
@@ -132,12 +97,47 @@ class _MyHomePageState extends State<MyHomePage> {
       zoomControlsEnabled: false,
       compassEnabled: false,
       myLocationEnabled: false,
-      onCameraMove: (CameraPosition position) {
-        _currentCameraPosition = position;
-      },
       onMapCreated: (GoogleMapController controller) {
         _controller.complete(controller);
       },
+    );
+  }
+
+  void animateMapViewCenterToCoordinates(final LatLng coordinates, CameraPosition target) {
+    final LatLng mapViewCenter = target.target;
+    final Tween<double> _latTween = Tween<double>(begin: mapViewCenter.latitude, end: coordinates.latitude);
+    final Tween<double> _lngTween = Tween<double>(begin: mapViewCenter.longitude, end: coordinates.longitude);
+
+    final AnimationController controller = AnimationController(
+      duration: Duration(milliseconds: 200),
+      vsync: this,
+    );
+    final Animation<double> animation = CurvedAnimation(
+      parent: controller,
+      curve: Curves.fastOutSlowIn,
+    );
+
+    controller.addListener(() {
+      moveMapViewCenterToCoordinates(
+        LatLng(_latTween.evaluate(animation), _lngTween.evaluate(animation)),
+      );
+    });
+
+    animation.addStatusListener((final AnimationStatus status) {
+      if (status == AnimationStatus.completed) {
+        controller.dispose();
+      } else if (status == AnimationStatus.dismissed) {
+        controller.dispose();
+      }
+    });
+    controller.forward();
+  }
+
+  void moveMapViewCenterToCoordinates(final LatLng coordinates) {
+    _mapController.animateCamera(
+      CameraUpdate.newLatLng(
+        LatLng(coordinates.latitude, coordinates.longitude),
+      ),
     );
   }
 }
